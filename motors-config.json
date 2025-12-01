@@ -1,0 +1,26 @@
+{
+    "MG996R": {
+        "torque": 11.0,
+        "weight": 55.0
+    },
+    "MG90S": {
+        "torque": 2.2,
+        "weight": 13.4
+    },
+    "DS3218": {
+        "torque": 20.0,
+        "weight": 60.0
+    },
+    "JX PDI-6221MG": {
+        "torque": 20.0,
+        "weight": 60.0
+    },
+    "LD-3015MG": {
+        "torque": 15.0,
+        "weight": 60.0
+    },
+    "Generic Micro": {
+        "torque": 1.5,
+        "weight": 15.0
+    }
+}
