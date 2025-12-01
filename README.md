@@ -59,4 +59,4 @@ The application calculates torque based on the **Worst Case Scenario**, where th
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
-*Created by @kiranranay*
+*Created by @kiranpranay*
