@@ -12,27 +12,125 @@ import tempfile
 # =========================
 
 CONFIG_FILE = "motors-config.json"
+SPECS_FILE = "specs.json"
 
-def load_motors():
-    if not os.path.exists(CONFIG_FILE):
-        return {
-            "MG996R": {"torque": 11.0, "weight": 55.0},
-            "MG90S": {"torque": 2.2, "weight": 13.4}
-        }
-    with open(CONFIG_FILE, "r") as f:
+def load_json(file_path):
+    if not os.path.exists(file_path):
+        return {}
+    with open(file_path, "r") as f:
         return json.load(f)
 
-def save_motors(data):
-    with open(CONFIG_FILE, "w") as f:
+def save_json(file_path, data):
+    with open(file_path, "w") as f:
         json.dump(data, f, indent=4)
 
 st.set_page_config(page_title="Robotic Arm Simulator", layout="wide")
 
 # Load Data
 if 'motor_db' not in st.session_state:
-    st.session_state.motor_db = load_motors()
+    st.session_state.motor_db = load_json(CONFIG_FILE)
+if 'specs_db' not in st.session_state:
+    st.session_state.specs_db = load_json(SPECS_FILE)
+
+# Initialize Session State Defaults for Widgets
+defaults = {
+    "len_x": 100.0,
+    "len_y": 120.0,
+    "len_z": 120.0,
+    "len_gap": 35.0,
+    "len_a": 60.0,
+    "mass_x": 177.1,
+    "mass_y": 104.06,
+    "mass_z": 127.56,
+    "mass_a": 36.24,
+    "pay_mass": 200.0,
+    "safe_fact": 1.8,
+    "m_select_0": "MG996R",
+    "m_select_1": "MG996R",
+    "m_select_2": "MG996R",
+    "m_select_3": "MG90S",
+    "m_select_4": "MG90S"
+}
+
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
 st.title("🤖 Robotic Arm Torque Calculator & Visualizer")
+
+# =========================
+# SPECS MANAGEMENT (SAVE/LOAD)
+# =========================
+
+with st.expander("💾 Manage Configurations (Save / Load Specs)"):
+    col_s1, col_s2, col_s3 = st.columns([1, 1, 1])
+    
+    # SAVE
+    with col_s1:
+        st.markdown("#### Save Current Specs")
+        save_name = st.text_input("Configuration Name", key="spec_save_name")
+        if st.button("Save Configuration"):
+            if save_name:
+                # Gather current state
+                current_spec = {
+                    "lx": st.session_state["len_x"],
+                    "ly": st.session_state["len_y"],
+                    "lz": st.session_state["len_z"],
+                    "l_gap": st.session_state["len_gap"],
+                    "la": st.session_state["len_a"],
+                    "mx": st.session_state["mass_x"],
+                    "my": st.session_state["mass_y"],
+                    "mz": st.session_state["mass_z"],
+                    "ma": st.session_state["mass_a"],
+                    "payload": st.session_state["pay_mass"],
+                    "sf": st.session_state["safe_fact"],
+                    "motors": [st.session_state.get(f"m_select_{i}") for i in range(5)]
+                }
+                st.session_state.specs_db[save_name] = current_spec
+                save_json(SPECS_FILE, st.session_state.specs_db)
+                st.success(f"Saved '{save_name}'")
+            else:
+                st.error("Enter a name")
+
+    # LOAD
+    with col_s2:
+        st.markdown("#### Load Configuration")
+        load_name = st.selectbox("Select Config", [""] + list(st.session_state.specs_db.keys()), key="spec_load_sel")
+        if st.button("Load Configuration"):
+            if load_name and load_name in st.session_state.specs_db:
+                spec = st.session_state.specs_db[load_name]
+                # Update session state
+                st.session_state["len_x"] = float(spec.get("lx", 100.0))
+                st.session_state["len_y"] = float(spec.get("ly", 120.0))
+                st.session_state["len_z"] = float(spec.get("lz", 120.0))
+                st.session_state["len_gap"] = float(spec.get("l_gap", 35.0))
+                st.session_state["len_a"] = float(spec.get("la", 60.0))
+                st.session_state["mass_x"] = float(spec.get("mx", 177.1))
+                st.session_state["mass_y"] = float(spec.get("my", 104.06))
+                st.session_state["mass_z"] = float(spec.get("mz", 127.56))
+                st.session_state["mass_a"] = float(spec.get("ma", 36.24))
+                st.session_state["pay_mass"] = float(spec.get("payload", 200.0))
+                st.session_state["safe_fact"] = float(spec.get("sf", 1.8))
+                
+                # Load motors
+                saved_motors = spec.get("motors", [])
+                for i, m_name in enumerate(saved_motors):
+                    if i < 5:
+                        st.session_state[f"m_select_{i}"] = m_name
+                
+                st.success(f"Loaded '{load_name}'")
+                st.rerun()
+
+    # DELETE
+    with col_s3:
+        st.markdown("#### Delete Configuration")
+        del_spec_name = st.selectbox("Select to Delete", [""] + list(st.session_state.specs_db.keys()), key="spec_del_sel")
+        if del_spec_name:
+            if st.button("Delete Config", type="primary"):
+                del st.session_state.specs_db[del_spec_name]
+                save_json(SPECS_FILE, st.session_state.specs_db)
+                st.success(f"Deleted '{del_spec_name}'")
+                st.rerun()
 
 # =========================
 # MOTOR DATABASE MANAGER
@@ -50,7 +148,7 @@ with st.expander("🛠️ Manage Motor Database (Add / Edit / Delete)"):
         if st.button("Add Motor"):
             if new_name and new_name not in st.session_state.motor_db:
                 st.session_state.motor_db[new_name] = {"torque": new_torque, "weight": new_weight}
-                save_motors(st.session_state.motor_db)
+                save_json(CONFIG_FILE, st.session_state.motor_db)
                 st.success(f"Added {new_name}")
                 st.rerun()
             elif new_name in st.session_state.motor_db:
@@ -68,7 +166,7 @@ with st.expander("🛠️ Manage Motor Database (Add / Edit / Delete)"):
             edit_weight = st.number_input("Weight (g)", value=curr_vals['weight'], step=1.0, key="edit_w")
             if st.button("Update Motor"):
                 st.session_state.motor_db[edit_name] = {"torque": edit_torque, "weight": edit_weight}
-                save_motors(st.session_state.motor_db)
+                save_json(CONFIG_FILE, st.session_state.motor_db)
                 st.success(f"Updated {edit_name}")
                 st.rerun()
 
@@ -79,7 +177,7 @@ with st.expander("🛠️ Manage Motor Database (Add / Edit / Delete)"):
         if del_name:
             if st.button("Delete Motor", type="primary"):
                 del st.session_state.motor_db[del_name]
-                save_motors(st.session_state.motor_db)
+                save_json(CONFIG_FILE, st.session_state.motor_db)
                 st.success(f"Deleted {del_name}")
                 st.rerun()
 
@@ -92,18 +190,18 @@ st.sidebar.header("⚙️ Arm Configuration")
 # 1. Link Lengths (mm)
 st.sidebar.subheader("Link Dimensions (mm)")
 st.sidebar.caption("Based on your sketch labels (x, y, z, a)")
-lx = st.sidebar.number_input("x (Base Height)", value=100.0, step=5.0)
-ly = st.sidebar.number_input("y (Shoulder -> Elbow)", value=120.0, step=5.0)
-lz = st.sidebar.number_input("z (Elbow -> Wrist M4)", value=120.0, step=5.0)
-l_gap = st.sidebar.number_input("Wrist Span (M4 -> M5)", value=35.0, step=1.0, help="Distance between Motor 4 and Motor 5")
-la = st.sidebar.number_input("a (M5 -> Suction Tip)", value=60.0, step=5.0)
+lx = st.sidebar.number_input("x (Base Height)", step=5.0, key="len_x")
+ly = st.sidebar.number_input("y (Shoulder -> Elbow)", step=5.0, key="len_y")
+lz = st.sidebar.number_input("z (Elbow -> Wrist M4)", step=5.0, key="len_z")
+l_gap = st.sidebar.number_input("Wrist Span (M4 -> M5)", step=1.0, help="Distance between Motor 4 and Motor 5", key="len_gap")
+la = st.sidebar.number_input("a (M5 -> Suction Tip)", step=5.0, key="len_a")
 
 # 2. Link Masses (g)
 st.sidebar.subheader("Link Masses (g)")
-mx = st.sidebar.number_input("Link x Mass", value=177.1, step=10.0)
-my = st.sidebar.number_input("Link y Mass", value=104.06, step=10.0)
-mz = st.sidebar.number_input("Link z Mass", value=127.56, step=10.0)
-ma = st.sidebar.number_input("Link a Mass", value=36.24, step=5.0)
+mx = st.sidebar.number_input("Link x Mass", step=10.0, key="mass_x")
+my = st.sidebar.number_input("Link y Mass", step=10.0, key="mass_y")
+mz = st.sidebar.number_input("Link z Mass", step=10.0, key="mass_z")
+ma = st.sidebar.number_input("Link a Mass", step=5.0, key="mass_a")
 
 # 3. Motor Configuration (5 Motors)
 st.sidebar.subheader("Motor Configuration")
@@ -113,15 +211,6 @@ motor_db = st.session_state.motor_db
 motor_names = list(motor_db.keys())
 motor_selections = []
 motor_masses = []
-
-def get_idx(name):
-    try:
-        return motor_names.index(name)
-    except:
-        return 0
-
-default_names = ["MG996R", "MG996R", "MG996R", "MG90S", "MG90S"]
-default_indices = [get_idx(n) for n in default_names]
 
 motor_roles = [
     "M1: Base Rotation (Yaw)",
@@ -134,18 +223,19 @@ motor_roles = [
 for i in range(5):
     col1, col2 = st.sidebar.columns([2, 1])
     with col1:
-        m_name = st.selectbox(motor_roles[i], motor_names, index=default_indices[i] if i < len(default_indices) else 0, key=f"m_select_{i}")
+        # Use key for session state persistence, removed index
+        m_name = st.selectbox(motor_roles[i], motor_names, key=f"m_select_{i}")
     with col2:
         # Display weight from DB
-        db_weight = motor_db[m_name]['weight']
+        db_weight = motor_db.get(m_name, {}).get('weight', 0.0)
         st.text(f"Weight:\n{db_weight} g")
     
     motor_selections.append(m_name)
     motor_masses.append(db_weight)
 
 motor_masses = np.array(motor_masses)
-payload_mass = st.sidebar.number_input("Payload Mass (g)", value=200.0, step=10.0)
-safety_factor = st.sidebar.slider("Safety Factor", 1.0, 3.0, 1.8, 0.1)
+payload_mass = st.sidebar.number_input("Payload Mass (g)", step=10.0, key="pay_mass")
+safety_factor = st.sidebar.slider("Safety Factor", 1.0, 3.0, step=0.1, key="safe_fact")
 
 # =========================
 # CALCULATION LOGIC
