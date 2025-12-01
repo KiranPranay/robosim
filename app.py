@@ -312,8 +312,7 @@ with st.expander("Show Detailed Torque Formulas"):
     $$T_3 = M_z \cdot \frac{L_z}{2} + M_{m4} \cdot L_z + M_{m5} \cdot (L_z + L_{gap}) + M_a \cdot (L_z + L_{gap} + \frac{L_a}{2}) + M_p \cdot (L_z + L_{gap} + L_a)$$
     
     **Formula for Motor 2 (Shoulder):**
-    $$T_2 = M_y \cdot \frac{L_y}{2} + M_{m3} \cdot L_y + M_z \cdot (L_y + \frac{L_z}{2}) + M_{m4} \cdot (L_y + L_z) + \dots$$
-    $$(... \text{continues summing all downstream moments shifted by } L_y)$$
+    $$T_2 = M_y \frac{L_y}{2} + M_{m3} L_y + M_z (L_y + \frac{L_z}{2}) + M_{m4} (L_y + L_z) + M_{m5} (L_y + L_z + L_{gap}) + M_a (L_y + L_z + L_{gap} + \frac{L_a}{2}) + M_p (L_y + L_z + L_{gap} + L_a)$$
     """)
 
 st.subheader("📄 Report Generation")
@@ -394,6 +393,65 @@ def create_pdf():
             os.unlink(tmpfile.name)
         except:
             pass
+
+    # Formulas
+    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="4. Torque Formulas (Worst Case Horizontal)", ln=True)
+    pdf.set_font("Arial", size=10)
+    
+    formulas_text = """
+    Variables:
+    Ly, Lz, Lgap, La: Lengths (cm)
+    My, Mz, Ma: Link Masses (kg)
+    Mm3, Mm4, Mm5: Motor Masses (kg)
+    Mp: Payload (kg)
+
+    Motor 5 (Wrist Pitch):
+    T5 = Ma * (La/2) + Mp * La
+
+    Motor 4 (Wrist Roll/Pitch Support):
+    T4 = Mm5 * Lgap + Ma * (Lgap + La/2) + Mp * (Lgap + La)
+
+    Motor 3 (Elbow):
+    T3 = Mz * (Lz/2) + Mm4 * Lz + Mm5 * (Lz + Lgap) + 
+         Ma * (Lz + Lgap + La/2) + Mp * (Lz + Lgap + La)
+
+    Motor 2 (Shoulder):
+    T2 = My*(Ly/2) + Mm3*Ly + Mz*(Ly + Lz/2) + Mm4*(Ly + Lz) + 
+         Mm5*(Ly + Lz + Lgap) + Ma*(Ly + Lz + Lgap + La/2) + 
+         Mp*(Ly + Lz + Lgap + La)
+    """
+    pdf.multi_cell(0, 5, formulas_text)
+
+    # Conclusion
+    pdf.ln(10)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="5. Conclusion & Recommendations", ln=True)
+    pdf.set_font("Arial", size=10)
+
+    failures = []
+    for i in range(5):
+        m_name = motor_selections[i]
+        req = torques[i] * safety_factor
+        avail = motor_db.get(m_name, {}).get('torque', 0.0)
+        if avail < req:
+            failures.append(f"Motor {i+1} ({m_name})")
+
+    if not failures:
+        concl = (f"SUCCESS: The proposed design meets all torque requirements with a Safety Factor of {safety_factor}. "
+                 "All selected motors operate within their rated stall torque limits.")
+    else:
+        concl = (f"FAILURE: The design is UNDERPOWERED. The following motors are insufficient for the load: {', '.join(failures)}. "
+                 "Please select higher torque motors, reduce link lengths/masses, or lower the payload.")
+
+    power_note = ("\n\nElectrical Considerations:\n"
+                  "- Voltage: Ensure a stable power supply of 6.6V (as per stall torque specs).\n"
+                  "- Current: High torque loads draw significant current. If motors are near their limit, "
+                  "expect peak currents >2A per motor. Ensure your power supply can handle the total peak current "
+                  "to prevent voltage sag, which can cause system instability.")
+
+    pdf.multi_cell(0, 5, concl + power_note)
 
     return pdf.output(dest='S').encode('latin-1')
 
