@@ -3,6 +3,9 @@ import numpy as np
 import plotly.graph_objects as go
 import json
 import os
+from fpdf import FPDF
+import matplotlib.pyplot as plt
+import tempfile
 
 # =========================
 # CONFIGURATION & DEFAULTS
@@ -12,7 +15,6 @@ CONFIG_FILE = "motors-config.json"
 
 def load_motors():
     if not os.path.exists(CONFIG_FILE):
-        # Default fallback if file missing
         return {
             "MG996R": {"torque": 11.0, "weight": 55.0},
             "MG90S": {"torque": 2.2, "weight": 13.4}
@@ -43,7 +45,7 @@ with st.expander("🛠️ Manage Motor Database (Add / Edit / Delete)"):
     with col_m1:
         st.markdown("#### Add New Motor")
         new_name = st.text_input("Model Name")
-        new_torque = st.number_input("Torque (kg.cm)", min_value=0.0, step=0.1, key="new_t")
+        new_torque = st.number_input("Stall Torque (6.6v) (kg.cm)", min_value=0.0, step=0.1, key="new_t")
         new_weight = st.number_input("Weight (g)", min_value=0.0, step=1.0, key="new_w")
         if st.button("Add Motor"):
             if new_name and new_name not in st.session_state.motor_db:
@@ -62,7 +64,7 @@ with st.expander("🛠️ Manage Motor Database (Add / Edit / Delete)"):
         edit_name = st.selectbox("Select to Edit", [""] + list(st.session_state.motor_db.keys()), key="edit_sel")
         if edit_name:
             curr_vals = st.session_state.motor_db[edit_name]
-            edit_torque = st.number_input("Torque (kg.cm)", value=curr_vals['torque'], step=0.1, key="edit_t")
+            edit_torque = st.number_input("Stall Torque (6.6v) (kg.cm)", value=curr_vals['torque'], step=0.1, key="edit_t")
             edit_weight = st.number_input("Weight (g)", value=curr_vals['weight'], step=1.0, key="edit_w")
             if st.button("Update Motor"):
                 st.session_state.motor_db[edit_name] = {"torque": edit_torque, "weight": edit_weight}
@@ -112,8 +114,6 @@ motor_names = list(motor_db.keys())
 motor_selections = []
 motor_masses = []
 
-# Default selections
-# Try to find defaults if they exist, else first item
 def get_idx(name):
     try:
         return motor_names.index(name)
@@ -136,18 +136,14 @@ for i in range(5):
     with col1:
         m_name = st.selectbox(motor_roles[i], motor_names, index=default_indices[i] if i < len(default_indices) else 0, key=f"m_select_{i}")
     with col2:
-        # Read-only display of weight, or allow override?
-        # Let's allow override but default to DB value
+        # Display weight from DB
         db_weight = motor_db[m_name]['weight']
-        m_weight = st.number_input(f"Wt(g)##{i}", value=db_weight, step=1.0, key=f"m_weight_{i}")
+        st.text(f"Weight:\n{db_weight} g")
     
     motor_selections.append(m_name)
-    motor_masses.append(m_weight)
+    motor_masses.append(db_weight)
 
 motor_masses = np.array(motor_masses)
-
-# 4. Payload
-st.sidebar.subheader("Payload")
 payload_mass = st.sidebar.number_input("Payload Mass (g)", value=200.0, step=10.0)
 safety_factor = st.sidebar.slider("Safety Factor", 1.0, 3.0, 1.8, 0.1)
 
@@ -265,8 +261,6 @@ with col_data:
         m_name = motor_selections[idx]
         req = torques[idx]
         req_sf = req * safety_factor
-        
-        # Get torque from DB (or use default if missing)
         avail = motor_db.get(m_name, {}).get('torque', 0.0)
         
         status = "✅ OK" if avail >= req_sf else "❌ OVERLOAD"
@@ -288,3 +282,126 @@ with col_data:
     - Static Torque: `~0` (Inertia only)
     - Available: `{avail}` kg.cm
     """)
+
+# =========================
+# FORMULAS & EXPORT
+# =========================
+
+st.markdown("---")
+st.subheader("📚 Physics & Formulas")
+
+with st.expander("Show Detailed Torque Formulas"):
+    st.markdown(r"""
+    The torque required at each joint is calculated by summing the moments of all components (links, motors, payload) that the joint must lift against gravity.
+    We assume the **Worst Case Scenario**: The arm is fully extended horizontally.
+    
+    **Variables:**
+    - $L_y, L_z, L_{gap}, L_a$: Lengths of links (cm)
+    - $M_y, M_z, M_a$: Masses of links (kg)
+    - $M_{m3}, M_{m4}, M_{m5}$: Masses of motors (kg)
+    - $M_p$: Payload mass (kg)
+    - $g$: Gravity (implicitly handled by using kg.cm units directly if we consider mass as weight force in kgf-ish, but here we sum moments in kg*cm directly).
+    
+    **Formula for Motor 5 (Wrist Pitch):**
+    $$T_5 = M_a \cdot \frac{L_a}{2} + M_p \cdot L_a$$
+    
+    **Formula for Motor 4 (Wrist Roll/Pitch Support):**
+    $$T_4 = M_{m5} \cdot L_{gap} + M_a \cdot (L_{gap} + \frac{L_a}{2}) + M_p \cdot (L_{gap} + L_a)$$
+    
+    **Formula for Motor 3 (Elbow):**
+    $$T_3 = M_z \cdot \frac{L_z}{2} + M_{m4} \cdot L_z + M_{m5} \cdot (L_z + L_{gap}) + M_a \cdot (L_z + L_{gap} + \frac{L_a}{2}) + M_p \cdot (L_z + L_{gap} + L_a)$$
+    
+    **Formula for Motor 2 (Shoulder):**
+    $$T_2 = M_y \cdot \frac{L_y}{2} + M_{m3} \cdot L_y + M_z \cdot (L_y + \frac{L_z}{2}) + M_{m4} \cdot (L_y + L_z) + \dots$$
+    $$(... \text{continues summing all downstream moments shifted by } L_y)$$
+    """)
+
+st.subheader("📄 Report Generation")
+
+def create_pdf():
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", size=12)
+    
+    # Title
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, txt="Robotic Arm Simulation Report", ln=True, align='C')
+    pdf.ln(10)
+    
+    # Configuration
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="1. Configuration", ln=True)
+    pdf.set_font("Arial", size=10)
+    
+    config_text = f"""
+    Lengths (mm): x={lx}, y={ly}, z={lz}, gap={l_gap}, a={la}
+    Link Masses (g): x={mx}, y={my}, z={mz}, a={ma}
+    Payload: {payload_mass} g
+    Safety Factor: {safety_factor}
+    """
+    pdf.multi_cell(0, 5, config_text)
+    pdf.ln(5)
+    
+    # Motor Results
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="2. Motor Analysis", ln=True)
+    pdf.set_font("Arial", size=10)
+    
+    # Header
+    pdf.cell(30, 7, "Motor", 1)
+    pdf.cell(40, 7, "Model", 1)
+    pdf.cell(35, 7, "Required (kg.cm)", 1)
+    pdf.cell(35, 7, "Available (kg.cm)", 1)
+    pdf.cell(30, 7, "Status", 1)
+    pdf.ln()
+    
+    for i in range(5):
+        m_name = motor_selections[i]
+        req = torques[i] * safety_factor
+        avail = motor_db.get(m_name, {}).get('torque', 0.0)
+        status = "OK" if avail >= req else "OVERLOAD"
+        
+        pdf.cell(30, 7, f"M{i+1}", 1)
+        pdf.cell(40, 7, m_name, 1)
+        pdf.cell(35, 7, f"{req:.2f}", 1)
+        pdf.cell(35, 7, f"{avail:.1f}", 1)
+        pdf.cell(30, 7, status, 1)
+        pdf.ln()
+        
+    pdf.ln(10)
+    
+    # 2D Diagram (Generate Matplotlib image)
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(200, 10, txt="3. 2D Diagram", ln=True)
+    
+    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmpfile:
+        # Create matplotlib figure matching the plotly one roughly
+        plt.figure(figsize=(8, 4))
+        x_pts = [0, 0, ly, ly+lz, ly+lz+l_gap, ly+lz+l_gap+la]
+        y_pts = [0, lx, lx, lx, lx, lx]
+        plt.plot(x_pts, y_pts, 'o-', linewidth=3, markersize=8, color='#00CC96')
+        plt.title("Arm Extension (Side View)")
+        plt.xlabel("Distance (mm)")
+        plt.ylabel("Height (mm)")
+        plt.grid(True)
+        plt.tight_layout()
+        plt.savefig(tmpfile.name)
+        plt.close()
+        
+        pdf.image(tmpfile.name, x=10, w=170)
+        # Cleanup
+        try:
+            os.unlink(tmpfile.name)
+        except:
+            pass
+
+    return pdf.output(dest='S').encode('latin-1')
+
+if st.button("Generate PDF Report"):
+    pdf_bytes = create_pdf()
+    st.download_button(
+        label="Download PDF",
+        data=pdf_bytes,
+        file_name="robotic_arm_report.pdf",
+        mime="application/pdf"
+    )

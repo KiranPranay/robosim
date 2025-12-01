@@ -22,5 +22,13 @@
     "Generic Micro": {
         "torque": 1.5,
         "weight": 15.0
+    },
+    "MG958": {
+        "torque": 20.0,
+        "weight": 68.0
+    },
+    "60KG": {
+        "torque": 60.0,
+        "weight": 160.0
     }
 }
